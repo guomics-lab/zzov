@@ -1,0 +1,282 @@
+---
+title: "zzov_12batch"
+author: "yuyi"
+date: "2021/12/20"
+output: html_document
+---
+
+```{r}
+rm(list = ls())
+
+options(stringsAsFactors = F)
+source("D:/datamining_library_ge.R")
+source("D:/library_yu.R")
+
+setwd("D:/实验室项目/ZZOV/12batch")
+library(DMwR2)
+library(openxlsx)
+library(ggpubr)
+df <- ge.readtable(paste0("./CAC20211125qianlj_ZZOV_plasma_TMT16plex_60min_b1__Proteins.txt"))
+df1 <- df[df$Protein.FDR.Confidence..Combined=="High",]
+df1 <- df1[!grepl(";",df1$Accession),]
+df1 <- df1[!grepl("CON_",df1$Accession),]
+df2 <- df1[,grep("Ratio|Grouped...F[1-9]*..126",names(df1))]
+
+# name=str_extract(names(df2),"[F][0-9]*..1[0-9][0-9][A-Z]*")
+name=str_extract(names(df2),"F[0-9]*..[0-9A-Z]*")
+name= gsub("\\.\\.","_",name)
+name= gsub("F","b",name)
+names(df2)=name
+
+df1$Gene.Symbol[which(df1$`Gene.Symbol`=="")]=NA
+df2 <- as.data.frame(df2)
+row.names(df2)=paste0(df1$Accession,"_",as.character(sapply(df1$`Gene.Symbol`, function(x){str_split(x,";")[[1]][1]})))
+
+
+
+
+
+df3 <- df2[,-grep("126",names(df2))]
+
+
+#pool
+pool<- df2[,grep("126",names(df2))]
+
+
+NA_threshold_table(df3)
+NA_threshold_table(pool)
+
+
+
+df3_7 <- df3[apply(df3,1, function(x){sum(is.na(x))/ncol(df3)})<0.7,]
+# df5_7[is.na(df5_7)]<-min(df5_7)*0.5
+
+
+pool_7 <- pool[apply(pool,1, function(x){sum(is.na(x))/ncol(pool)})<0.7,]
+# pool_7[is.na(pool_7)]<-min(pool_7)*0.5
+
+write.csv(df5,"matrix.csv")
+write.csv(df3_7,"12batch_matrix0.7.csv")
+
+```
+
+
+
+
+```{r}
+info <- read_excel("./20211207ZZOV_plasmaValidation_batchDesign.xlsx",sheet = 3)
+
+Input1 <- read_csv("./20211220_ZZOVplasma12batch_matrix0.7.csv")
+name=Input1$swissprotID
+Input1=Input1[,-1]
+rownames(Input1)= name
+
+Input2 <- read_csv("./BatchFree_batch_MS2021-12-20.csv")
+Input2=Input2[,-1]
+rownames(Input2)= name
+
+Input3 <- read_csv("./BatchFree_batch2021-12-20.csv")
+Input3=Input3[,-1]
+rownames(Input3)= name
+
+
+
+
+
+library(dplyr)
+
+id.rep<- info$SampleName[match(colnames(Input3),info$name)]
+rep<-Input3
+colnames(rep)<-id.rep
+repB <- names(rep)[grepl("_rep", names(rep))]
+type<-gsub('_rep', '', repB)
+
+
+
+############################
+
+sum.cv <- matrix(NA, nrow(Input3), 1)
+
+mid.cv <-c()
+type<-c()
+# i=repB[1]
+for (i in repB) {
+  repa <- str_split(i,"_rep")[[1]][1]
+  tmp <- rep[,which(names(rep) %in% c(repa,i))]
+  if (length(tmp)==2){
+  type<-c(type,repa)
+  tmp.cv <- apply(tmp, 1,function(x){mean(x,na.rm = TRUE)}) 
+  sum.cv <- cbind.data.frame(sum.cv,tmp.cv)
+ 
+  }else{return}
+  }
+
+sum.cv <- sum.cv[,-1]
+names(sum.cv) <- type
+
+sum.cv[is.na(sum.cv)]<-NA
+
+
+df2<-Input3
+names(df2)<-id.rep
+tmp1 <- df2[,-which(names(df2) %in% c(type,repB))]
+
+df2 <- cbind.data.frame(sum.cv,tmp1)
+rownames(df2)<-rownames(Input3)
+
+
+# nad2<-gsub('c', '', names(df2))
+# names(df2)<-nad2
+
+write.csv(df2,file = "combinerepInput3.csv")
+
+ # yu.cv2(df2,title = "combinerepInput3",log2 = F)
+
+
+df2<-read.csv("./combinerepInput3.csv",row.names = 1 )
+# name<-df2$X1
+# df2<-df2[,-1]
+# rownames(df2)<-name
+
+
+
+
+linda.volcano.plot <- function(data,#data.frame
+                         group1,
+                         group2,
+                         label1,
+                         label2,
+                         paired = F,
+                         pvalue= 0.05,
+                         P.adjust=T,
+                         var.equal = F,
+                         fold_change = 2,
+                         up_col="#EC9B8F", #dw_col = "#9370DB",up_col = "#FF7256"
+                         dw_col="#A7DEE8"){
+  df1 <- data
+  #填充NA
+  #df1[is.na(df1)]=min(df1,na.rm = T)*0.8
+  #计算foldchange
+    df1$`log2(foldchange)` <- apply(df1,1, function(x) log2((mean(x[group1],na.rm = T)/mean(x[group2],na.rm = T))))
+    
+  
+  if(paired){
+    P_value <- apply(df1,
+                     1,
+                     function(y) {
+                       
+                       p_try = tryCatch(t.test(y[group1],
+                                               y[group2],
+                                               paired = paired,
+                                               var.equal = var.equal)$p.value,
+                                        error = function(x) NA)
+                     })
+  }else{
+    P_value <- apply(df1,
+                     1,
+                     function(y) {
+                       
+                       p_try = tryCatch(t.test(y[group1],
+                                               y[group2],
+                                               paired = F,
+                                               var.equal = var.equal)$p.value,
+                                        error = function(x) NA)
+                     })  
+  }
+  #
+  df1$P_value<- P_value
+  df1$P_value_adjust<-p.adjust(df1$P_value, method="BH")
+  
+  if(P.adjust){
+    #
+    pdf(paste0(label1,"_",label2, "_volcano.pdf"),width=4, height=4)
+    
+    plot(df1$`log2(foldchange)`, -log10(df1$P_value_adjust), col="#00000033", pch=19,cex=0.5,
+         xlab=paste("log2 (fold change)"),
+         ylab="-log10 (adjust P value)",
+         xlim= c(-round(max(abs(df1$`log2(foldchange)`),na.rm=T),1),round(max(abs(df1$`log2(foldchange)`),na.rm=T),1)),
+         main=paste0(label1," : ",label2))
+    
+    #
+    up <- subset(df1, df1$P_value_adjust < pvalue & df1$`log2(foldchange)` > log2(fold_change))
+    down <- subset(df1, df1$P_value_adjust < pvalue & df1$`log2(foldchange)` < -log2(fold_change))
+    print(paste0("down:",nrow(down)))
+    print(paste0("up:",nrow(up)))
+    write.csv(up,file = paste0(label1,"_",label2, "_up_volcano.csv"))
+    write.csv(down,file = paste0(label1,"_",label2, "_dw_volcano.csv"))
+    write.csv(df1,file = paste0(label1,"_",label2, "_all_volcano.csv"))
+    differprot <- c(row.names(up),row.names(down))
+   
+    points(up$`log2(foldchange)`, -log10(up$P_value_adjust), col=1, 
+           #bg = brewer.pal(9, "YlOrRd")[6], 
+           bg=up_col,
+           pch=21, cex=0.5)
+    points(down$`log2(foldchange)`, -log10(down$P_value_adjust), col = 1, 
+           #bg = brewer.pal(11,"RdBu")[9], 
+           bg=dw_col,
+           pch = 21,cex=0.5)
+    abline(h=-log10(pvalue), v=c(-log2(fold_change),log2(fold_change)), lty=2,lwd=1)
+       h1<-df1[match(heat$elements,rownames(df1)),]
+        text(h1$`log2(foldchange)`, -log10(h1$P_value_adjust),rownames(h1),cex=0.2)
+  
+    dev.off()}else{
+      #
+      pdf(paste0(label1,"_",label2, "_volcano.pdf"),width=4, height=4)
+      
+      plot(df1$`log2(foldchange)`, -log10(df1$P_value), col="#00000033", pch=19,
+           xlab=paste("log2 (fold change)"),
+           ylab="-log10 (P value)",xlim=c(-round(max(abs(df1$`log2(foldchange)`),na.rm=T),1),round(max(abs(df1$`log2(foldchange)`),na.rm=T),1)),
+           main=paste0(label1," : ",label2))
+      
+      #
+      up <- subset(df1, df1$P_value < pvalue & df1$`log2(foldchange)` > log2(fold_change))
+      down <- subset(df1, df1$P_value < pvalue & df1$`log2(foldchange)` < -log2(fold_change))
+      print(paste0("down:",nrow(down)))
+      print(paste0("up:",nrow(up)))
+      write.csv(up,file = paste0(label1,"_",label2, "_up_volcano.csv"))
+      write.csv(down,file = paste0(label1,"_",label2, "_dw_volcano.csv"))
+      write.csv(df1,file = paste0(label1,"_",label2, "_all_volcano.csv"))
+      differprot <- c(row.names(up),row.names(down))
+      points(up$`log2(foldchange)`, -log10(up$P_value), col=1, 
+            # bg = brewer.pal(9, "YlOrRd")[6],
+            bg=up_col,
+             pch=21, cex=1.2)
+      points(down$`log2(foldchange)`, -log10(down$P_value), col = 1, 
+            # bg = brewer.pal(11,"RdBu")[9],
+             bg=dw_col,
+             pch = 21,cex=1.2)
+      abline(h=-log10(pvalue), v=c(-log2(fold_change),log2(fold_change)), lty=2,lwd=1)
+  
+      dev.off()
+    }
+  return(differprot)
+}
+
+linda.volcano.plot(df2,two,HS,label1 = "NM+BN",label2 = "HS-1",P.adjust = T,fold_change = 1.2)
+
+
+
+
+group<- info$label1[match(colnames(df2),info$SampleName)]
+HS <- which(group=="HS")
+NM <- which(group=="NM")
+BN <- which(group=="BN")
+
+two<-which(group=="BN"|group=="NM")
+
+df3<-cbind(df2[,NM],df2[,BN],df2[,HS])
+
+
+group[which(group=="BN"|group=="NM")]<-"NM+BN"
+
+heat <- read_excel("./20211227NM_BN_HS_boxplot_list.xlsx",sheet = 1)
+
+# yu.boxplot(data,title,my_comparisons)
+h1<-match(heat$elements,rownames(df3))
+ for (i in 1:8) {
+ data <- data.frame(value=as.numeric(df3[h1[i],]),group=as.factor(group))
+  ge.plot.boxplot(data,data$group,data$value,data$group,paste0(row.names(df3)[h1[i]]),title=paste0(row.names(df3)[h1[i]],"_boxplot"))
+ }
+
+
+```

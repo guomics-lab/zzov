@@ -1,0 +1,165 @@
+---
+title: "zzov_12batch"
+author: "yuyi"
+date: "2021/12/20"
+output: html_document
+---
+
+```{r}
+rm(list = ls())
+
+options(stringsAsFactors = F)
+source("D:/datamining_library_ge.R")
+source("D:/library_yu.R")
+
+setwd("D:/实验室项目/ZZOV/12batch")
+library(DMwR2)
+library(openxlsx)
+library(ggpubr)
+df <- ge.readtable(paste0("./CAC20211125qianlj_ZZOV_plasma_TMT16plex_60min_b1__Proteins.txt"))
+df1 <- df[df$Protein.FDR.Confidence..Combined=="High",]
+df1 <- df1[!grepl(";",df1$Accession),]
+df1 <- df1[!grepl("CON_",df1$Accession),]
+df2 <- df1[,grep("Ratio|Grouped...F[1-9]*..126",names(df1))]
+
+# name=str_extract(names(df2),"[F][0-9]*..1[0-9][0-9][A-Z]*")
+name=str_extract(names(df2),"F[0-9]*..[0-9A-Z]*")
+name= gsub("\\.\\.","_",name)
+name= gsub("F","b",name)
+names(df2)=name
+
+df1$Gene.Symbol[which(df1$`Gene.Symbol`=="")]=NA
+df2 <- as.data.frame(df2)
+row.names(df2)=paste0(df1$Accession,"_",as.character(sapply(df1$`Gene.Symbol`, function(x){str_split(x,";")[[1]][1]})))
+
+
+
+
+
+df3 <- df2[,-grep("126",names(df2))]
+
+
+#pool
+pool<- df2[,grep("126",names(df2))]
+
+
+NA_threshold_table(df3)
+NA_threshold_table(pool)
+
+
+
+df3_7 <- df3[apply(df3,1, function(x){sum(is.na(x))/ncol(df3)})<0.7,]
+# df5_7[is.na(df5_7)]<-min(df5_7)*0.5
+
+
+pool_7 <- pool[apply(pool,1, function(x){sum(is.na(x))/ncol(pool)})<0.7,]
+# pool_7[is.na(pool_7)]<-min(pool_7)*0.5
+
+write.csv(df5,"matrix.csv")
+write.csv(df3_7,"12batch_matrix0.7.csv")
+
+```
+
+
+
+
+```{r}
+info <- read_excel("./20211207ZZOV_plasmaValidation_batchDesign.xlsx",sheet = 3)
+
+Input1 <- read_csv("./20211220_ZZOVplasma12batch_matrix0.7.csv")
+name=Input1$swissprotID
+Input1=Input1[,-1]
+rownames(Input1)= name
+
+Input2 <- read_csv("./BatchFree_batch_MS2021-12-20.csv")
+Input2=Input2[,-1]
+rownames(Input2)= name
+
+Input3 <- read_csv("./BatchFree_batch2021-12-20.csv")
+Input3=Input3[,-1]
+rownames(Input3)= name
+
+
+
+library(ggthemes)
+set.seed(10)
+TMTbatch<- info$TMTbatch[match(colnames(Input1),info$name)]
+TMTbatch2<-str_extract(TMTbatch,"[0-9]*[0-9]")
+TMTbatch2<-as.numeric(TMTbatch2)
+
+
+ge.plot.pca2(Input3,TMTbatch2,title="TMT_3",width=12,height=8)
+
+
+caabatch<- info$matrix[match(colnames(Input1),info$name)]
+
+ge.plot.pca(Input3,caabatch,title="CAA_3",width=12,height=8)
+
+
+label1<- info$label1[match(colnames(Input1),info$name)]
+
+ge.plot.pca(Input3,label1,title="nbh_3",width=12,height=8)
+
+
+
+
+
+
+library(dplyr)
+
+
+id.rep<- info$SampleName[match(colnames(Input3),info$name)]
+rep<-Input3
+colnames(rep)<-id.rep
+repB <- names(rep)[grepl("_rep", names(rep))]
+type<-gsub('_rep', '', repB)
+
+############################rep cv
+# fivenum(tmp)
+sum.cv <-c()
+mean_value <- rownames(rep)
+mid.cv <-c()
+type<-c()
+# i=repB[1]
+for (i in repB) {
+  repa <- str_split(i,"_rep")[[1]][1]
+  tmp <- rep[,which(names(rep) %in% c(repa,i))]
+  if (length(tmp)==2){
+  type<-c(type,repa)
+  tmp.cv <- apply(tmp, 1 , function(x){sd(x,na.rm = T)/mean(x,na.rm =T)}) 
+  tmp.mean <- apply(tmp, 1 , mean,na.rm=T)  
+  
+  sum.cv <- c(sum.cv,tmp.cv)
+  mean_value <-cbind.data.frame(mean_value,tmp.mean)
+  
+  mid.tmp <- median(tmp.cv,na.rm = T)
+  mid.cv <- c(mid.cv,mid.tmp)
+  }else{return}
+  }
+mean_value <- mean_value[,-1]
+names(mean_value) <- repB
+
+
+ df.cv <- data.frame(cv=sum.cv,sample=rep("rep",each=nrow(rep)))
+
+df.cv <- df.cv[!is.na(df.cv$cv),]
+
+n_fun <- function(x){
+  return(data.frame(y = max(x)+0.1, label = paste0("median =",round(median(x),3))))
+}
+
+#plot violin
+p<-ggplot(df.cv, aes(x = sample, y=cv,color=sample)) + 
+  geom_violin(trim=FALSE)+
+  scale_fill_manual(values=brewer.pal(12,"Set3")[c(1:10)])+
+  geom_boxplot(width=0.1)+
+  theme(legend.direction = 'horizontal',legend.position = 'top',panel.grid.major =element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(),axis.line = element_line(colour = "black"))+
+ 
+   theme(axis.text = element_text(size = 16,colour = "black"),text = element_text(size = 30,colour = "black"))+
+  theme(axis.text.x = element_text( hjust = 1,angle = 45))+
+  theme(legend.position = "none")+
+  stat_summary(fun.data =n_fun, geom="text")
+ggsave("CV_all.pdf",plot =p ,device = NULL,width = 8, height = 8)
+
+
+
