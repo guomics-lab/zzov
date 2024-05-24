@@ -12,7 +12,6 @@ options(stringsAsFactors = F)
 source("D:/datamining_library_ge.R")
 source("D:/library_yu.R")
 
-setwd("D:/实验室项目/ZZOV/12batch")
 library(DMwR2)
 library(openxlsx)
 library(ggpubr)
