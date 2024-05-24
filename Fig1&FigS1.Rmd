@@ -1,0 +1,663 @@
+---
+title: "ZZOV"
+author: "Yan Zhou"
+date: "2024-03-31"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+
+pacman::p_load(readxl, openxlsx,                  #Load One or More Packages
+               reshape2, magrittr, tidyverse, Hmisc,
+               ggrepel,ggplot2,
+               ggpubr, ggsignif, ggridges,
+               RColorBrewer, randomcoloR,
+               gridExtra, ggplotify, Rtsne,corrplot)
+
+```
+
+
+```{r import data}
+
+pinfo = read.xlsx("20210411ZZOV_patient_sample_info.xlsx", sheet = 1)
+
+sinfo = read.xlsx("20210411ZZOV_patient_sample_info.xlsx", sheet = 2)
+
+pm = read.table("20210408ZZOV_1064sample_withNA_diann_prot.txt")  # updated matrix
+
+```
+
+
+```{r tsne - Fig1 C, FigS1 B}
+outliers = read.xlsx("20210409tsne_1064_outliers.xlsx",sheet = 2, colNames = F)
+outliers = outliers$X1
+
+pm_2 = pm[, !names(pm) %in% outliers]
+names(pm_2) = gsub("P216HSab", "P216HSbb", names(pm_2))
+
+### normalization
+pm_2 = 2^pm_2
+
+###quantile normalize
+pm2_QuanNor = preprocessCore::normalize.quantiles(as.matrix(pm_2), copy = F)
+
+
+## NA imputation by min
+pm2_QuanNor[is.na(pm2_QuanNor)] = 0.8*min(na.omit(pm2_QuanNor)) 
+
+pm2_QuanNor = as.data.frame(pm2_QuanNor)
+
+## log2
+pm2_QuanNor = log2(pm2_QuanNor)
+
+nm = names(pm2_QuanNor)
+
+nm1 = str_sub(nm, end = -5) 
+
+pinfo1 = pinfo[pinfo$Patient_ID %in% nm1,]
+
+
+#test if all samples in the matrix are in the patient info
+sum(nm1 %in% pinfo$Patient_ID)
+
+# different labels (normal, benign, borderline, carcinoma)
+nm3 = pinfo1$Group[match(nm1,pinfo1$Patient_ID)]  
+
+
+# different labels (batch)
+nm4 = sinfo$batchId[match(nm1,sinfo$Patient_ID)]  
+
+temp1 = sapply(strsplit(nm4, "_", perl = T), '[', 1)
+temp2 = sapply(strsplit(nm4, "_", perl = T), '[', 2)
+nm5 = paste(temp1,temp2, sep = "_")
+
+
+df10 <- pm2_QuanNor
+
+set.seed(2021)
+df11.tsne <- Rtsne(t(df10), dims = 2, perplexity = 10, verbose = T , check_duplicates = FALSE)
+
+
+
+df.tsne = cbind(df11.tsne$Y,
+                nm3,
+                nm5) %>%
+  data.frame(row.names = nm,
+             stringsAsFactors = F)
+
+names(df.tsne) = c("tsne1",
+                   "tsne2",
+                   "Histology",
+                   "batch")
+
+write.xlsx(df.tsne,"source_data/Fig1C.xlsx")
+
+## very important step!! or you will get a shit
+df.tsne[,c(1,2)] = apply(df.tsne[,c(1,2)],
+                          2,
+                          as.numeric)
+
+df.tsne$batch = factor(df.tsne$batch, levels = unique(nm5))
+
+
+fig_tsne_patient = ggplot(df.tsne,
+                           aes(tsne1,tsne2)) +
+  geom_point(aes(color = Histology),
+             size = 3) +
+  # scale_color_manual(name = sort("Histology6"),
+  #                    # values = organ_fig_color,
+  #                    values = c("#E6AB02",
+  #                              "#1B9E77",
+  #                            #  "#D95F02",
+  #                              "#7570B3",
+  #                              "#E7298A"
+  #                               )) +
+  labs(title = "tsne") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.text = element_text(size = 12,
+                                 color = "black"),
+        axis.title = element_text(size = 14),
+        # axis.title.y = element_text(size = 16,),
+        plot.title = element_text(hjust=0.5,size = 14),
+        legend.title = element_text(size = 14),
+        legend.text = element_text(size = 12))
+
+ggsave("1041_histology_TSNE_20210410.pdf",
+       fig_tsne_patient,
+       height = 6,
+       width = 8) 
+
+fig_tsne_patient = ggplot(df.tsne,
+                          aes(tsne1,tsne2)) +
+  geom_point(aes(color = batch),
+             size = 3) +
+  # scale_color_manual(name = sort("Histology"),
+  #                    # values = organ_fig_color,
+  #                    values = c("#E6AB02",
+  #                              "#1B9E77",
+  #                            #  "#D95F02",
+  #                              "#7570B3",
+  #                              "#E7298A"
+  #                               )) +
+  labs(title = "tsne") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.text = element_text(size = 12,
+                                 color = "black"),
+        axis.title = element_text(size = 14),
+        # axis.title.y = element_text(size = 16,),
+        plot.title = element_text(hjust=0.5,size = 14),
+        legend.title = element_text(size = 14),
+        legend.text = element_text(size = 12))
+
+ggsave("1041_prot_TSNE_batch_20210408.pdf",
+       fig_tsne_patient,
+       height = 6,
+       width = 12) 
+
+
+
+```
+
+```{r PCA - FigS1 C,D,E}
+ge.split <- function(data,split,which=1){
+  sapply(data,function(v){strsplit(v,split)[[1]][which]})
+}
+
+pm_1041 = read.table("20210409ZZOV_1041sample_withNA_diann_prot.txt")
+pm_2 = 2^pm_1041
+
+###quantile normalize
+pm2_QuanNor = preprocessCore::normalize.quantiles(as.matrix(pm_2), copy = F)
+
+
+## NA imputation by min
+pm2_QuanNor[is.na(pm2_QuanNor)] = 0.8*min(na.omit(pm2_QuanNor)) 
+
+pm2_QuanNor = as.data.frame(pm2_QuanNor)
+
+## log2
+pm2_QuanNor = log2(pm2_QuanNor)
+
+sinfo2 = sinfo[sinfo$Sample_name %in% names(pm2_QuanNor),]
+
+
+
+### PCA
+set.seed(2021)
+pca = prcomp(t(pm2_QuanNor))
+
+#head(pca$x)
+
+screeplot(pca,  type = "line")
+
+# the variance explained by each component
+var_explained <- pca$sdev^2/sum(pca$sdev^2)
+var_explained[1:5]
+
+nm = names(pm2_QuanNor)
+nm1 = sinfo2$batchId[match(nm, sinfo2$Sample_name)]
+nm2 = paste0(ge.split(nm1,"_",1),"_",ge.split(nm1,"_",2))
+nm3 = ge.split(nm1,"_",2) %>% str_sub(start = 2) %>% as.numeric()
+
+
+df.pca = cbind(pca$x[,1:2],
+               nm2,
+               nm3) %>%
+  data.frame(row.names = nm,
+             stringsAsFactors = F)
+
+names(df.pca) = c("PC1",
+                   "PC2",
+                   "Batch",
+                   "#batch")
+
+# df.pca$Histology[df.pca$Histology == "  carcinoma"] = "carcinoma"
+df.pca$Batch = factor(df.pca$Batch, levels = unique(df.pca$Batch))
+
+## very important step!! or you will get a shit
+df.pca[,c(1,2)] = apply(df.pca[,c(1,2)],
+                          2,
+                          as.numeric)
+
+df.pca$`#batch` = as.numeric(df.pca$`#batch`)
+
+for (i in 1:nrow(df.pca)){
+  if (grepl("OVA", df.pca$Batch[i])) {df.pca$label[i] = (df.pca$`#batch`[i])}
+  if (grepl("OVB", df.pca$Batch[i])) {df.pca$label[i] = (df.pca$`#batch`[i] + 49)}
+  if (grepl("OVC", df.pca$Batch[i])) {df.pca$label[i] = (df.pca$`#batch`[i] + 55)}
+}
+
+
+### 2021.11.22 color legend changed to gradient
+library(scales)
+library(RColorBrewer)
+library(viridis)
+
+fig_PCA_patient = ggplot(df.pca,
+                           aes(PC1,PC2)) +
+  geom_point(aes(color = label),
+             size = 1.5) +
+  # scale_colour_gradientn(colours = "Spectral") +
+  scale_color_viridis(option = "D") +
+  labs(title = "PCA",
+       x=paste0("PC1: ",round(var_explained[1]*100,1),"%"),
+       y=paste0("PC2: ",round(var_explained[2]*100,1),"%")) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.text = element_text(size = 12,
+                                 color = "black"),
+        axis.title = element_text(size = 14),
+        # axis.title.y = element_text(size = 16,),
+        plot.title = element_text(hjust=0.5,size = 14),
+        legend.title = element_text(size = 14),
+        legend.text = element_text(size = 12))
+
+ggsave("1041_prot_PCA_batch_20211122.pdf",
+       fig_PCA_patient,
+       height = 6,
+       width = 8) 
+
+write.xlsx(df.pca, "source_data/FigS1C.xlsx", rowNames = T)
+
+
+
+### Batch A:
+## label 1: column
+df.pca.A = df.pca[grepl("A",df.pca$Batch),]
+df.pca.A$Batch = factor(df.pca.A$Batch, levels = unique(df.pca.A$Batch))
+temp1 = ge.split(nm1,"_",1)
+temp2 = ge.split(nm1,"_",2)
+
+a = paste("b",1:9, sep = "")
+b = paste("b",10:13, sep = "")
+c = paste("b",14:22, sep = "")
+e = paste("b",24:49, sep = "")
+
+for (i in 1:nrow(df.pca.A)){
+  if (temp1[i] == "OVA" & temp2[i] %in% a) {df.pca.A$column[i] = "a"}
+  if (temp1[i] == "OVA" & temp2[i] %in% b) {df.pca.A$column[i] = "b"}
+  if (temp1[i] == "OVA" & temp2[i] %in% c) {df.pca.A$column[i] = "c"}
+  if (temp1[i] == "OVA" & temp2[i] == "b23") {df.pca.A$column[i] = "d"}
+  if (temp1[i] == "OVA" & temp2[i] %in% e) {df.pca.A$column[i] = "e"}
+  #if (temp1[i] == "OVB" | temp1[i] == "OVC") {df.pca.A$column[i] = "f"}
+}
+
+df.pca.A$column = paste0("Column ",df.pca.A$column)
+
+fig_PCA_patient = ggplot(df.pca.A,
+                           aes(PC1,PC2)) +
+  geom_point(aes(color = column),
+             size = 1.5) +
+  labs(title = "PCA",
+       x=paste0("PC1: ",round(var_explained[1]*100,1),"%"),
+       y=paste0("PC2: ",round(var_explained[2]*100,1),"%")) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.text = element_text(size = 12,
+                                 color = "black"),
+        axis.title = element_text(size = 14),
+        # axis.title.y = element_text(size = 16,),
+        plot.title = element_text(hjust=0.5,size = 14),
+        legend.title = element_text(size = 14),
+        legend.text = element_text(size = 12))
+
+ggsave("1041_prot_PCA_batchA_column_20211217.pdf",
+       fig_PCA_patient,
+       height = 6,
+       width = 8) 
+
+
+
+## label 2: peptide amount
+df.pca.A$"#batch" = df.pca.A$"#batch" %>% as.numeric()
+
+for (i in 1:nrow(df.pca.A)){
+  if (df.pca.A$`#batch`[i] <= 16 ) {df.pca.A$peptide_amount[i] = "500 ng"}
+  if (df.pca.A$`#batch`[i] > 16) {df.pca.A$peptide_amount[i] = "250 ng"}
+}
+
+
+fig_PCA_patient = ggplot(df.pca.A,
+                           aes(PC1,PC2)) +
+  geom_point(aes(color = peptide_amount),
+             size = 1.5) +
+  # scale_color_manual(name = sort("Histology"),
+  #                    # values = organ_fig_color,
+  #                    values = c("#E6AB02",
+  #                              "#1B9E77",
+  #                            #  "#D95F02",
+  #                              "#7570B3",
+  #                              "#E7298A"
+  #                               )) +
+  labs(title = "PCA",
+       x=paste0("PC1: ",round(var_explained[1]*100,1),"%"),
+       y=paste0("PC2: ",round(var_explained[2]*100,1),"%")) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.text = element_text(size = 12,
+                                 color = "black"),
+        axis.title = element_text(size = 14),
+        # axis.title.y = element_text(size = 16,),
+        plot.title = element_text(hjust=0.5,size = 14),
+        legend.title = element_text(size = 14),
+        legend.text = element_text(size = 12))
+
+ggsave("1041_prot_PCA_batchA_pep_20211217.pdf",
+       fig_PCA_patient,
+       height = 6,
+       width = 8) 
+
+
+write.xlsx(df.pca.A, "source_data/FigS1DE.xlsx", rowNames = T)
+
+
+```
+
+```{r protein number boxplot - Fig1 B}
+sinfo$histology = pinfo$Group[match(sinfo$Patient_ID, pinfo$Patient_ID)]
+
+sinfo$histology[grepl("arcinoma",sinfo$histology )] = "Carcinoma"
+
+sinfo1 = sinfo[sinfo$Sample_name %in% names(pm_1041),]
+
+prot_num = data.frame(sample = names(pm_1041),
+                      prot_num = apply(pm_1041, 2, function(x) sum(!is.na(x))),
+                      Type = factor(sinfo1$histology,
+                                    levels = c("Normal","Benign",
+                                               "Borderline","Carcinoma")),
+                      stringsAsFactors = F)
+
+
+
+
+
+summary = boxplot(prot_num~Type,data = prot_num)
+boxplot_details = summary$stats %>% as.data.frame()
+colnames(boxplot_details) = summary$names
+rownames(boxplot_details) = c("Lower whisker","First Quartile","Median","Third Quartile","Upper whisker")
+
+write.xlsx(boxplot_details,"source_data/fig1B_boxplot_details.xlsx",rowNames = T)
+write.xlsx(prot_num,"source_data/fig1B_boxplot_data.xlsx",rowNames = T)
+
+
+pdf("ZZOV_prot_num_histology_boxplot_20210412.pdf", width = 6, height = 4)
+ggplot(prot_num,
+       aes(Type, prot_num,
+           colour = Type)) +
+  geom_jitter(alpha = 0.5,size=1) +
+  geom_boxplot(alpha = 0.5,size=1) +
+  ylab("Number of preotein identifications") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.text = element_text(size = 12, colour = "black"),
+        axis.title.x = element_text(size = 16),
+        axis.title.y = element_text(size = 16),
+        plot.title = element_text(size = 20),
+        legend.title = element_text(size = 14),
+        legend.text = element_text(size = 12))
+dev.off()    
+   
+```
+
+```{r correlation - FigS1 F}
+
+pm_2samples = pm_1041[,(grepl("P335", names(pm_1041)) | grepl("P518", names(pm_1041))) ]
+
+pm_2samples = pm_2samples[,c("P335HSaa", "P335HSab", "P335HSba", "P335HSbb",
+                             "P518HSaa", "P518HSab", "P518HSba", "P518HSbb")]
+
+mycolor = colorRampPalette(c("#FFCCCC", "#FF0000"))
+
+df = cor(pm_2samples,use = "pairwise.complete.obs") %>% data.frame()
+write.xlsx(df,"source_data/FigS1F.xlsx",rowNames = T)
+
+
+df1 = df+0.5  # for visualization reason
+
+pdf("correlation_8samples_20211116_withnumbers.pdf")
+corrplot(df1,
+         type = "full",
+         method = "color",
+         is.corr = F,
+         tl.col = "black",
+         # tl.pos = 'd',
+         tl.cex = 0.7,
+         #col.lim = c(1,1.5),
+         col = COL1('Reds'),
+         cl.length = 6,
+         addCoef.col = 'black'
+         # mar=c(0,0,1,0)
+         )
+dev.off()
+
+
+
+
+
+
+
+
+```
+
+```{r violin - FigS1 G}
+# mouse liver
+pm_ml <- read.delim("20210129ZZOV_QCML_liverlib_excludedFromAssay_prot_matrix.txt")  #2021.01.30文件更新
+pm_ml = data.frame((pm_ml[,-1]),
+                   row.names = pm_ml$prot) 
+
+names(pm_ml) = names(pm_ml) %>%
+  sapply(function(x) {
+    x = str_split(x,
+                  "_")[[1]]
+    return(paste0(str_sub(nth(x,-5),
+                          5),
+                  "_",
+                  nth(x,-3)))
+  })
+
+pm_ml <- pm_ml[apply(pm_ml, 1, function(x){sum(!is.na(x))})>0,]
+pm_ml = 2^pm_ml
+
+###quantile normalize
+pm_QuanNor = preprocessCore::normalize.quantiles(as.matrix(pm_ml), copy = F)
+pm_QuanNor = as.data.frame(pm_QuanNor)
+
+pm_QuanNor[is.na(pm_QuanNor)] = 0.8*min(na.omit(pm_QuanNor))
+
+pm_QuanNor = log2(pm_QuanNor)
+
+# Calculate the cor value between any two samples
+cor_value_ml = combn(1:ncol(pm_QuanNor),2) %>%
+  apply(2,
+        function(x) {
+          cor(pm_QuanNor[,x[1]],
+              pm_QuanNor[,x[2]],
+              use = "pairwise.complete.obs")
+        })
+
+
+## pool
+pm_pool <- read.delim("20210118ZZOV_68pool_diann_prot.txt")
+
+names(pm_pool) = names(pm_pool) %>%
+  str_sub(3,-6)
+pm_pool <- pm_pool[apply(pm_pool, 1, function(x){sum(!is.na(x))})>0,]
+
+pm_pool = 2^pm_pool
+
+###quantile normalize
+pm_QuanNor = preprocessCore::normalize.quantiles(as.matrix(pm_pool), copy = F)
+pm_QuanNor = as.data.frame(pm_QuanNor)
+
+pm_QuanNor[is.na(pm_QuanNor)] = 0.8*min(na.omit(pm_QuanNor))
+
+pm_QuanNor = log2(pm_QuanNor)
+
+
+# Calculate the cor value between any two samples
+cor_value_pool = combn(1:ncol(pm_QuanNor),2) %>%
+  apply(2,
+        function(x) {
+          cor(pm_QuanNor[,x[1]],
+              pm_QuanNor[,x[2]],
+              use = "pairwise.complete.obs")
+        })
+
+## replicates
+pm_2 = pm[, !names(pm) %in% outliers]
+names(pm_2) = gsub("P216HSab", "P216HSbb", names(pm_2))
+nm = names(pm_2)
+
+
+# correct wrong sample names
+nm[!nm %in% sinfo$Sample_name]
+sinfo$Sample_name[!sinfo$Sample_name %in% nm]
+nm_1 = gsub("P72HSab", "P72HSbb", nm)
+nm_1 = gsub("P498HSab", "P498HSbb", nm_1)
+nm_1 = gsub("P235HSab", "P235HSbb", nm_1)
+nm_1 = gsub("P522HSab", "P522HSbb", nm_1)
+nm_1 = gsub("P105HSab", "P105HSbb", nm_1)
+nm_1 = gsub("P182BDab", "P182BDbb", nm_1)
+nm_1 = gsub("P747HSab", "P747HSbb", nm_1)
+nm_1 = gsub("P727HSab", "P727HSbb", nm_1)
+nm_1 = gsub("P787HSab", "P787HSbb", nm_1)
+
+nm[!nm %in% nm_1]
+nm_1[!nm_1 %in% nm]
+names(pm_2) = nm_1
+
+# remove proteins that are NA in all samples
+na_ratio_in_each_prot = apply(pm_2,
+                              1, 
+                              function(x) {
+                                sum(is.na(x))/ncol(pm_2)
+                              })
+na_ratio_in_each_prot = data.frame(sample = names(na_ratio_in_each_prot),
+                                   na_ratio = na_ratio_in_each_prot,
+                                   stringsAsFactors = F)
+
+rmv = na_ratio_in_each_prot[na_ratio_in_each_prot$na_ratio == 1,]
+
+
+x = sum(is.na(pm_2[rmv$sample,]))  # 1041 * 3 = 3123
+
+pm_2 = pm_2[!row.names(pm_2) %in% rmv$sample, ]
+
+###quantile normalize
+pm2_QuanNor = preprocessCore::normalize.quantiles(as.matrix(pm_2), copy = F)
+
+
+## NA imputation by min
+pm2_QuanNor[is.na(pm2_QuanNor)] = 0.8*min(na.omit(pm2_QuanNor)) 
+
+pm2_QuanNor = as.data.frame(pm2_QuanNor)
+
+## log2
+pm2_QuanNor = log2(pm2_QuanNor)
+
+
+
+
+#calculate correlation of technical replicates
+sinfo1 = sinfo[sinfo$Sample_name %in% names(pm2_QuanNor) ,]
+tech_rep = read.xlsx("20210412ZZOV_replicates.xlsx", sheet = 2)
+identical(str_sub(tech_rep$technical.replicates_1, end = -5), str_sub(tech_rep$technical.replicates_2, end = -5))
+
+tech_names = as.vector(t(tech_rep))
+
+tech_names = tech_names[tech_names %in% sinfo1$Sample_name]
+test1 = str_sub(tech_names, end = -5)
+
+test1[!(duplicated(test1)|duplicated(test1, fromLast=TRUE))]
+tech_names = tech_names[-grep("P216",tech_names)]
+
+Tech_rep_no = match(tech_names,sinfo1$Sample_name)
+cor_Tech_rep = matrix(Tech_rep_no,
+                      ncol = 2, 
+                      byrow = T) %>%
+  apply(1, 
+        function(x) {
+          cor(pm2_QuanNor[,x[1]],
+              pm2_QuanNor[,x[2]],
+              use = "pairwise.complete.obs")
+        })
+
+#calculate correlation of biological replicates
+bio_rep = read.xlsx("20210412ZZOV_replicates.xlsx", sheet = 1)
+identical(str_sub(bio_rep$bio_rep_1, end = -5), str_sub(bio_rep$bio_rep_2, end = -5))
+
+bio_rep_name = as.vector(t(bio_rep))
+
+bio_rep_name = bio_rep_name[bio_rep_name %in% sinfo1$Sample_name]
+
+test1 = str_sub(bio_rep_name, end = -5)
+test2 = test1[!(duplicated(test1)|duplicated(test1, fromLast=TRUE))]
+
+for (i in test2) {
+bio_rep_name = bio_rep_name[-grep(i,bio_rep_name)]
+}
+
+bio_rep_no = match(bio_rep_name,sinfo1$Sample_name)
+cor_bio_rep = matrix(bio_rep_no,
+                     ncol = 2,
+                     byrow = T) %>%
+  apply(1,
+        function(x) {
+          cor(pm2_QuanNor[,x[1]],
+              pm2_QuanNor[,x[2]],
+              use = "pairwise.complete.obs")
+        })
+
+
+
+#### plot 
+data_violin = data.frame(y = c(cor_value_ml,cor_value_pool, cor_Tech_rep,cor_bio_rep),
+                         x = c(rep("Mouse liver", 2278), rep("Pool", 2278),  
+                               rep("Technical replicates", 118),rep("Biological replicates", 109)))
+data_violin$x = factor(data_violin$x, levels = c("Mouse liver", "Pool", "Technical replicates", "Biological replicates"))
+
+names(data_violin) = c("cor_value","group")
+
+summary = boxplot(cor_value~group,data = data_violin)
+boxplot_details = summary$stats %>% as.data.frame()
+colnames(boxplot_details) = summary$names
+rownames(boxplot_details) = c("Lower whisker","First Quartile","Median","Third Quartile","Upper whisker")
+
+write.xlsx(boxplot_details,"source_data/figS1G_violinplot_details.xlsx",rowNames = T)
+write.xlsx(data_violin,"source_data/figS1G_violinplot_data.xlsx",rowNames = T)
+
+
+
+pdf("4violin_plots_20211118.pdf")
+ggplot(data_violin, aes(group, cor_value, fill=x)) +
+  geom_violin(fill="transparent",
+              draw_quantiles = c(0.25, 0.75), 
+              linetype = "dashed",
+              show.legend = F
+              ) +
+  geom_violin(fill="transparent",draw_quantiles = 0.5) +
+  # geom_boxplot(width = 0.2)+
+  stat_summary(fun=mean, geom="point", shape=20, size=3, color="red", fill="red")+
+  theme_bw() + 
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+dev.off()
+
+
+
+```

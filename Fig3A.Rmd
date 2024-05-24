@@ -1,0 +1,342 @@
+---
+title: "Fig2 B,C"
+author: "Yan Zhou"
+date: "2024-04-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+pacman::p_load(readxl, openxlsx,                  #Load One or More Packages
+               reshape2, magrittr, tidyverse, Hmisc,
+               ggrepel,data.table,glmnet,tableone,
+               caTools,MASS,pROC,boot,qpcR,dplyr,
+               ggpubr, ggsignif, ggridges,
+               RColorBrewer, randomcoloR,
+               gridExtra, ggplotify,
+               Biobase)
+```
+
+
+```{r import data}
+
+pinfo = read.xlsx("20210728ZZOV_patient_sample_info.xlsx", sheet = "A.patient")
+
+sinfo = read.xlsx("20210728ZZOV_patient_sample_info.xlsx", sheet = "C.923_sample")
+
+pm = read.table("20210615ZZOV_923sample_quanNor_NA=0.8min_diann_prot.txt")  # updated matrix
+
+
+
+
+```
+
+```{r data-processing}
+## data processing
+pm_withNA = read.table("20210413ZZOV_923sample_withNA_diann_prot.txt")
+
+na_rate = rowSums(is.na(pm_withNA)) / ncol(pm_withNA)
+na_thres = 0.70
+pm_withNA80 <- pm_withNA[na_rate < na_thres,]
+
+pm = pm[row.names(pm_withNA80),]
+
+
+nm = str_sub(names(pm), end = -4)
+
+pinfo1 = pinfo[pinfo$Patient_ID %in% nm, ]
+pinfo2 = pinfo1[(pinfo1$Group == "Normal" | pinfo1$Group == "Primary carcinoma"),]
+
+sinfo1 = sinfo[sinfo$bcr_patient_barcode %in% pinfo2$Bcr_patient_barcode,]
+sinfo1$Histology = pinfo2$Histology8[match(sinfo1$bcr_patient_barcode, pinfo2$Bcr_patient_barcode)]
+
+pm1 = pm[,names(pm) %in% sinfo1$Sample_name]
+sinfo2 = sinfo1[match(names(pm1), sinfo1$Sample_name),]
+
+```
+
+```{r t test - Fig3 A}
+
+A = pinfo2$Patient_ID[pinfo2$Histology8 == "NM" ]
+B1 = pinfo2$Patient_ID[pinfo2$Histology8 == "HS" ]
+B2 = pinfo2$Patient_ID[pinfo2$Histology8 == "LS" ]
+B3 = pinfo2$Patient_ID[pinfo2$Histology8 == "MC" ]
+B4 = pinfo2$Patient_ID[pinfo2$Histology8 == "EC" ]
+B5 = pinfo2$Patient_ID[pinfo2$Histology8 == "CC" ]
+
+
+group_A = pm[,nm %in% A]
+group_B1 = pm[,nm %in% B1]
+group_B2 = pm[,nm %in% B2]
+group_B3 = pm[,nm %in% B3]
+group_B4 = pm[,nm %in% B4]
+group_B5 = pm[,nm %in% B5]
+
+
+group_A_log2 = log2(group_A)
+group_B1_log2 = log2(group_B1)
+group_B2_log2 = log2(group_B2)
+group_B3_log2 = log2(group_B3)
+group_B4_log2 = log2(group_B4)
+group_B5_log2 = log2(group_B5)
+
+## group B1 HS
+
+P_value_B1 = data.frame(matrix())
+p_adjusted_B1 = data.frame(matrix())
+
+
+zero_range <- function(x, tol = .Machine$double.eps ^ 0.5) {
+  if (length(x) == 1) return(TRUE)
+  x <- range(x) / rowMeans(x)
+  identical(x[1], x[2])
+}
+
+
+
+for(i in 1:nrow(group_A_log2)){
+  if (sum(zero_range(group_A_log2[i,]) + zero_range(group_B1_log2[i,])) > 0)
+  {P_value_B1[i,1] = NA}
+  else
+  {Ttest = t.test(group_A_log2[i,], group_B1_log2[i,],
+                  paired = FALSE, var.equal = FALSE)
+  P_value_B1[i,1] = Ttest$p.value
+  }
+}
+
+
+p_adjusted_B1 = P_value_B1
+p_adjusted_B1[,1] = p.adjust(P_value_B1[,1], method = "BH")
+
+pm_fc_A = rowMeans(group_A) 
+pm_fc_B1 = rowMeans(group_B1)
+
+fc_B1 = pm_fc_B1 / pm_fc_A
+
+result_B1 = cbind(P_value_B1,p_adjusted_B1,fc_B1) %>% as.data.frame()
+
+rownames(result_B1) = rownames(pm)
+result_B1$log2fc = log2(result_B1$fc)
+
+names(result_B1)[1:2] = c("p_value", "p_value_adjusted")
+
+result_B1 = result_B1[!result_B1$fc_B1 == 1, ]
+
+Pval_list_B1_0.05 <- result_B1[result_B1$p_value_adjusted < 0.05 & 
+                                 (!is.na(result_B1$p_value_adjusted)) &
+                                 abs(result_B1$log2fc) > 1, ]
+
+
+
+
+
+## group B2 LS
+P_value_B2 = data.frame(matrix())
+p_adjusted_B2 = data.frame(matrix())
+
+
+for(i in 1:nrow(group_A_log2)){
+  if (sum(zero_range(group_A_log2[i,]) + zero_range(group_B2_log2[i,])) > 0)
+  {P_value_B2[i,1] = NA}
+  else
+  {Ttest = t.test(group_A_log2[i,], group_B2_log2[i,],
+                  paired = FALSE, var.equal = FALSE)
+  P_value_B2[i,1] = Ttest$p.value
+  }
+}
+
+
+p_adjusted_B2 = P_value_B2
+p_adjusted_B2[,1] = p.adjust(P_value_B2[,1], method = "BH")
+
+pm_fc_A = rowMeans(group_A) 
+pm_fc_B2 = rowMeans(group_B2)
+
+fc_B2 = pm_fc_B2 / pm_fc_A
+
+result_B2 = cbind(P_value_B2,p_adjusted_B2,fc_B2) %>% as.data.frame()
+
+rownames(result_B2) = rownames(pm)
+result_B2$log2fc = log2(result_B2$fc)
+
+names(result_B2)[1:2] = c("p_value", "p_value_adjusted")
+
+result_B2 = result_B2[!result_B2$fc_B2 == 1, ]
+
+Pval_list_B2_0.05 <- result_B2[result_B2$p_value_adjusted < 0.05 & 
+                                 (!is.na(result_B2$p_value_adjusted)) &
+                                 abs(result_B2$log2fc) > 1, ]
+
+
+
+## B3 MC
+
+P_value_B3 = data.frame(matrix())
+p_adjusted_B3 = data.frame(matrix())
+
+
+for(i in 1:nrow(group_A_log2)){
+  if (sum(zero_range(group_A_log2[i,]) + zero_range(group_B3_log2[i,])) > 0)
+  {P_value_B3[i,1] = NA}
+  else
+  {Ttest = t.test(group_A_log2[i,], group_B3_log2[i,],
+                  paired = FALSE, var.equal = FALSE)
+  P_value_B3[i,1] = Ttest$p.value
+  }
+}
+
+
+p_adjusted_B3 = P_value_B3
+p_adjusted_B3[,1] = p.adjust(P_value_B3[,1], method = "BH")
+
+pm_fc_A = rowMeans(group_A) 
+pm_fc_B3 = rowMeans(group_B3)
+
+fc_B3 = pm_fc_B3 / pm_fc_A
+
+result_B3 = cbind(P_value_B3,p_adjusted_B3,fc_B3) %>% as.data.frame()
+
+rownames(result_B3) = rownames(pm)
+result_B3$log2fc = log2(result_B3$fc)
+
+names(result_B3)[1:2] = c("p_value", "p_value_adjusted")
+
+result_B3 = result_B3[!result_B3$fc_B3 == 1, ]
+
+
+Pval_list_B3_0.05 <- result_B3[result_B3$p_value_adjusted < 0.05 & 
+                                 (!is.na(result_B3$p_value_adjusted)) &
+                                 abs(result_B3$log2fc) > 1, ]
+
+
+
+## B4 EC
+
+P_value_B4 = data.frame(matrix())
+p_adjusted_B4 = data.frame(matrix())
+
+
+for(i in 1:nrow(group_A_log2)){
+  if (sum(zero_range(group_A_log2[i,]) + zero_range(group_B4_log2[i,])) > 0)
+  {P_value_B4[i,1] = NA}
+  else
+  {Ttest = t.test(group_A_log2[i,], group_B4_log2[i,],
+                  paired = FALSE, var.equal = FALSE)
+  P_value_B4[i,1] = Ttest$p.value
+  }
+}
+
+
+p_adjusted_B4 = P_value_B4
+p_adjusted_B4[,1] = p.adjust(P_value_B4[,1], method = "BH")
+
+pm_fc_A = rowMeans(group_A) 
+pm_fc_B4 = rowMeans(group_B4)
+
+fc_B4 = pm_fc_B4 / pm_fc_A
+
+result_B4 = cbind(P_value_B4,p_adjusted_B4,fc_B4) %>% as.data.frame()
+
+rownames(result_B4) = rownames(pm)
+result_B4$log2fc = log2(result_B4$fc)
+
+names(result_B4)[1:2] = c("p_value", "p_value_adjusted")
+
+result_B4 = result_B4[!result_B4$fc_B4 == 1, ]
+
+
+Pval_list_B4_0.05 <- result_B4[result_B4$p_value_adjusted < 0.05 & 
+                                 (!is.na(result_B4$p_value_adjusted)) &
+                                 abs(result_B4$log2fc) > 1, ]
+
+
+
+## B5 MC
+
+P_value_B5 = data.frame(matrix())
+p_adjusted_B5 = data.frame(matrix())
+
+
+for(i in 1:nrow(group_A_log2)){
+  if (sum(zero_range(group_A_log2[i,]) + zero_range(group_B5_log2[i,])) > 0)
+  {P_value_B5[i,1] = NA}
+  else
+  {Ttest = t.test(group_A_log2[i,], group_B5_log2[i,],
+                  paired = FALSE, var.equal = FALSE)
+  P_value_B5[i,1] = Ttest$p.value
+  }
+}
+
+
+p_adjusted_B5 = P_value_B5
+p_adjusted_B5[,1] = p.adjust(P_value_B5[,1], method = "BH")
+
+pm_fc_A = rowMeans(group_A) 
+pm_fc_B5 = rowMeans(group_B5)
+
+fc_B5 = pm_fc_B5 / pm_fc_A
+
+result_B5 = cbind(P_value_B5,p_adjusted_B5,fc_B5) %>% as.data.frame()
+
+rownames(result_B5) = rownames(pm)
+result_B5$log2fc = log2(result_B5$fc)
+
+names(result_B5)[1:2] = c("p_value", "p_value_adjusted")
+
+result_B5 = result_B5[!result_B5$fc_B5 == 1, ]
+
+Pval_list_B5_0.05 <- result_B5[result_B5$p_value_adjusted < 0.05 & 
+                                 (!is.na(result_B5$p_value_adjusted)) &
+                                 abs(result_B5$log2fc) > 1, ]
+
+
+DEPs1 = unique(c(row.names(Pval_list_B1_0.05), row.names(Pval_list_B2_0.05),
+               row.names(Pval_list_B3_0.05), row.names(Pval_list_B4_0.05),
+               row.names(Pval_list_B5_0.05)))
+
+
+```
+
+
+```{r ANOVA - Fig3 A}
+sinfo2 = sinfo2[!sinfo2$Histology == "NM",]
+pm1 = pm[,names(pm) %in% sinfo2$Sample_name]
+
+aov_p = apply(log2(pm1),
+              1,
+              function(v) {
+                p = tryCatch(aov(v ~ sinfo2$Histology) %>%
+                  summary() %>%
+                  .[[1]] %>%
+                  .[["Pr(>F)"]] %>%
+                  .[1] %>%
+                  round(digits = 3),
+                  error = function(x) NA)
+              })
+
+# adjust P value by Benjamini-Hochberg method
+aov_p_adjusted = p.adjust(aov_p, method = "BH")
+
+prot_aov0.05 = row.names(pm1) %>%
+  .[which(aov_p_adjusted <= 0.05)]
+
+prot_aov = data.frame(row.names = row.names(pm1), avo_p = aov_p, aov_p_adjusted)
+
+prot_aov0.05 = prot_aov[which(prot_aov$aov_p_adjusted <= 0.05),]
+
+write.xlsx(prot_aov0.05,
+           "ZZOV_aovp_adj.P_0.05_histology_5groups_20210721.xlsx", rowNames = T)
+
+DEPs2 = prot_aov0.05
+
+
+DEPs3 = intersect(DEPs1, DEPs2)
+
+pm_DEPs1 = pm1[DEPs1,] %>% as.matrix()
+pm_DEPs2 = pm1[DEPs2,] %>% as.matrix()
+pm_DEPs3 = pm1[DEPs3,] %>% as.matrix() 
+
+label = sinfo2$Histology %>% factor(levels = c("HS", "LS", "MC", "EC", "CC"))
+
+
+```

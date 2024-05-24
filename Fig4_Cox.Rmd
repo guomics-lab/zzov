@@ -1,0 +1,322 @@
+---
+title: "COX_Fig4"
+author: "Yan Zhou"
+date: "2024-04-01"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+rm(list = ls())
+pacman::p_load(readxl, openxlsx,                  #Load One or More Packages
+               reshape2, magrittr, tidyverse, Hmisc,
+               ggrepel,
+               ggpubr, ggsignif, ggridges,
+               RColorBrewer, randomcoloR,
+               gridExtra, ggplotify,
+               ggupset, VennDiagram,
+               FactoMineR, factoextra, Rtsne, umap, 
+               pheatmap, ComplexHeatmap, vioplot,
+               circlize, RCircos, corrplot,
+               Biobase, survival, survminer, magrittr,
+               ConsensusClusterPlus)
+ge.split <- function(data,split,which=1){
+  sapply(data,function(v){strsplit(v,split)[[1]][which]})
+}
+
+```
+
+
+```{r import data}
+pinfo = read.xlsx("20210421ZZOV_patient_923sample_info.xlsx", sheet = 1)
+
+sinfo = read.xlsx("20210421ZZOV_patient_923sample_info.xlsx", sheet = 2)
+
+pm = read.table("20210615ZZOV_923sample_quanNor_NA=0.8min_diann_prot.txt")  # updated matrix
+
+pm_NA = read.table("20210413ZZOV_923sample_withNA_diann_prot.txt")
+
+```
+
+
+```{r filter patients info}
+# primary patients
+pinfo_pry = pinfo[pinfo$Group == "Primary carcinoma" &
+                    pinfo$Histology8 == "HS" &
+                    (pinfo$modified_Tumor_stage == "3" | 
+                       pinfo$modified_Tumor_stage == "4" ) &
+                    (pinfo$`Frequency.of.chemotherapy(A:-2,B:3-5,C:6-8,D:≥9)` == "C" |
+                       pinfo$`Frequency.of.chemotherapy(A:-2,B:3-5,C:6-8,D:≥9)` == "D") &
+                    (pinfo$Bevacizumab.or.PARP.inhibitor == "No" | 
+                       pinfo$Bevacizumab.or.PARP.inhibitor == "NO" |
+                       pinfo$Bevacizumab.or.PARP.inhibitor == "NOT available") &
+                    !is.na(pinfo$`Recurrence.free.survival(RFS)/month`) &
+                    !pinfo$`Recurrence.free.survival(RFS)/month` == "NOT available" ,]
+
+
+bcr = sinfo$bcr_patient_barcode[match(names(pm), sinfo$Sample_name)]
+
+
+# only patients that still in the protein matrix
+pinfo1_pry = pinfo_pry[pinfo_pry$Bcr_patient_barcode %in% bcr,]
+
+sinfo_pry = sinfo[sinfo$bcr_patient_barcode %in% pinfo1_pry$Bcr_patient_barcode,]
+
+# relapsing patients
+pinfo_rlps = pinfo[pinfo$Group == "Relapsing carcinoma" &
+                    pinfo$Histology8 == "HS" & 
+                    !is.na(pinfo$`Recurrence.free.survival(RFS)/month`) &
+                    !pinfo$`Recurrence.free.survival(RFS)/month` == "NOT available" &
+                    (pinfo$`Frequency.of.chemotherapy(A:-2,B:3-5,C:6-8,D:≥9)` == "C" |
+                       pinfo$`Frequency.of.chemotherapy(A:-2,B:3-5,C:6-8,D:≥9)` == "D") &
+                    (pinfo$Bevacizumab.or.PARP.inhibitor == "No" |
+                       pinfo$Bevacizumab.or.PARP.inhibitor == "NO" |
+                       pinfo$Bevacizumab.or.PARP.inhibitor == "NOT available" |
+                       is.na(pinfo$Bevacizumab.or.PARP.inhibitor)),]
+
+pinfo1_rlps = pinfo_rlps[pinfo_rlps$Bcr_patient_barcode %in% bcr,]
+
+sinfo_rlps = sinfo[sinfo$bcr_patient_barcode %in% pinfo1_rlps$Bcr_patient_barcode,]
+
+
+# neo-adjuvant patients
+pinfo_neo = pinfo[pinfo$Group == "Carcinoma with neoadjuvant therapy" &
+                    pinfo$Histology8 == "HS" & 
+                    (pinfo$modified_Tumor_stage == "3" | 
+                       pinfo$modified_Tumor_stage == "4" ) &
+                    !is.na(pinfo$`Recurrence.free.survival(RFS)/month`) &
+                    !pinfo$`Recurrence.free.survival(RFS)/month` == "NOT available" &
+                    (pinfo$`Frequency.of.chemotherapy(A:-2,B:3-5,C:6-8,D:≥9)` == "C" |
+                       pinfo$`Frequency.of.chemotherapy(A:-2,B:3-5,C:6-8,D:≥9)` == "D") &
+                    (pinfo$Bevacizumab.or.PARP.inhibitor == "No" |
+                       pinfo$Bevacizumab.or.PARP.inhibitor == "NO" |
+                       pinfo$Bevacizumab.or.PARP.inhibitor == "NOT available" |
+                       is.na(pinfo$Bevacizumab.or.PARP.inhibitor)),]
+
+pinfo1_neo = pinfo_neo[pinfo_neo$Bcr_patient_barcode %in% bcr,]
+sinfo_neo = sinfo[sinfo$bcr_patient_barcode %in% pinfo1_neo$Bcr_patient_barcode,]
+
+```
+
+
+```{r data preprocessing}
+## NA% threshold = 70%
+na_rate = rowSums(is.na(pm_NA)) / ncol(pm_NA)
+na_thres = 0.70
+pm_NA70 <- pm_NA[na_rate < na_thres,]
+
+pm1 = pm[row.names(pm_NA70),]
+
+
+## Normalization according to age
+# INT function
+int <- function(x){
+  #inverse normal transformation
+  qnorm((rank(x,na.last="keep")-0.5)/sum(!is.na(x)))
+}
+
+
+
+# data preparation
+names(sinfo)[2] = "Bcr_patient_barcode"
+pinfo = pinfo[pinfo$Bcr_patient_barcode %in% sinfo$Bcr_patient_barcode,]
+
+sinfo_merged = left_join(sinfo, pinfo[,c("Bcr_patient_barcode","Age_at_diagnosis",
+                                                           "Doctor","Tumor_residual_disease((no.residual),1(≤1㎝),2(＞1㎝),Not.available)",
+"Metastasis.of.lymph",
+                                                           "Sampling.location(A:uterine.appendages;B:pelvic.cavity;C:abdominal.cavity;D:Distant.metastasis)",
+                                                           "Number.of.peritoneal.chemotherapy","CA125.before.the.treatment","HE4.before.the.treatment",                                                           "CA125.of.drug.resistance.before.last.chemotherapy",
+"Recurrence.free.survival(RFS)/month",
+"Recurrent.disease")], by = 'Bcr_patient_barcode')
+
+pm2 = t(pm1) %>% data.frame()
+pm2 = rownames_to_column(pm2, var = "Sample_name")
+pro_merged = left_join(pm2,sinfo_merged, by = "Sample_name" )
+
+## rank-based INT
+# Age residuals + standardization
+res_stan <- function(column){
+  lm.fit <- lm(formula = column~Age_at_diagnosis,data=pro_merged)
+  res <- lm.fit$residuals
+  res <- int(res)
+}
+
+pro_res <- sapply(pro_merged[,2:7720], res_stan)
+row.names(pro_res) = pro_merged$Sample_name
+
+pro_res = pro_res[sinfo_merged$Sample_name,] %>% t() %>% data.frame()
+
+```
+
+
+```{r univariate COX}
+##pry
+raw_mat_pry <- pro_res[, sinfo_pry$Sample_name]
+
+prot_pry_impMin = raw_mat_pry %>% t() %>% as.data.frame()
+
+
+sample_pry = cbind(pinfo1_pry$Patient_ID, pinfo1_pry$`Recurrence.free.survival(RFS)/month`, pinfo1_pry$Recurrent.disease) %>% as.data.frame()
+names(sample_pry) = c("Patient_ID", "RFS", "recur")
+
+sample_pry$recur = factor(sample_pry$recur, labels = c(0,1)) %>% as.numeric()
+nm2 = str_sub(row.names(prot_pry_impMin), end = -4)
+
+
+prot_pry_impMin$RFS = sample_pry$RFS[match(nm2,  sample_pry$Patient_ID)] %>% as.numeric()
+prot_pry_impMin$recur = sample_pry$recur[match(nm2,  sample_pry$Patient_ID)] %>% as.numeric()
+
+
+### rlps
+
+raw_mat_rlps <- pro_res[, sinfo_rlps$Sample_name]
+prot_rlps_impMin <- raw_mat_rlps %>% t() %>% as.data.frame()
+
+sample_rlps = cbind(pinfo1_rlps$Patient_ID, pinfo1_rlps$`Recurrence.free.survival(RFS)/month`, pinfo_rlps$Recurrent.disease) %>% as.data.frame()
+names(sample_rlps) = c("Patient_ID", "RFS", "recur")
+
+sample_rlps$recur = factor(sample_rlps$recur, labels = c(0,1)) %>% as.numeric()
+nm2 = str_sub(row.names(prot_rlps_impMin), end = -4)
+
+
+prot_rlps_impMin$RFS = sample_rlps$RFS[match(nm2,  sample_rlps$Patient_ID)] %>% as.numeric()
+prot_rlps_impMin$recur = sample_rlps$recur[match(nm2,  sample_rlps$Patient_ID)] %>% as.numeric()
+
+
+ 
+# ## neo matrix
+
+raw_mat_neo <- pro_res[, sinfo_neo$Sample_name]
+prot_neo_impMin <- raw_mat_neo %>% t() %>% as.data.frame()
+
+sample_neo = cbind(pinfo1_neo$Patient_ID, pinfo1_neo$`Recurrence.free.survival(RFS)/month`, pinfo1_neo$Recurrent.disease) %>% as.data.frame()
+names(sample_neo) = c("Patient_ID", "RFS", "recur")
+
+sample_neo$recur = factor(sample_neo$recur, labels = c(0,1)) %>% as.numeric()
+nm2 = str_sub(row.names(prot_neo_impMin), end = -4)
+
+
+prot_neo_impMin$RFS = sample_neo$RFS[match(nm2,  sample_neo$Patient_ID)] %>% as.numeric()
+prot_neo_impMin$recur = sample_neo$recur[match(nm2,  sample_neo$Patient_ID)] %>% as.numeric()
+
+
+### calculate
+
+##pry
+# names(prot_pry_impMin) = gsub("-", "_", names(prot_pry_impMin)) # will report errors if there is a digit after the hyphen-
+# names(prot_pry_impMin) = gsub("/", "_", names(prot_pry_impMin))
+
+covariates <- names(prot_pry_impMin[,1:(ncol(prot_pry_impMin)-2)])  # protein names
+univ_formulas <- sapply(covariates, 
+                        function(x) as.formula(paste('Surv(RFS, recur)~',x)))
+univ_models <- lapply(univ_formulas, function(x){coxph(x, data = prot_pry_impMin)})
+univ_results <- lapply(univ_models,
+                       function(x){
+                         x <- summary(x)
+                         wald.pvalue <- signif(x$wald['pvalue'], digits = 2)  %>% as.numeric()
+                         wald.test <- signif(x$wald["test"], digits = 2)
+                         log.pvalue <- signif(x$logtest['pvalue'], digits = 2) %>% as.numeric()
+                         log.test <- signif(x$logtest["test"], digits = 2)
+                         beta <- signif(x$coef[1], digits=2);
+                         HR <- signif(x$coef[2], digits=2);
+                         HR.confint.lower <- signif(x$conf.int[,"lower .95"],2)
+                         HR.confint.upper <- signif(x$conf.int[,"upper .95"],2)
+                         HR <- paste0(HR, " (", 
+                                      HR.confint.lower, "-", HR.confint.upper, ")")
+                         res<-c(beta, HR, wald.test, wald.pvalue,log.test, log.pvalue)
+                         names(res)<-c("beta", "HR (95% CI for HR)",           
+                                       "wald.test", "wald.pvalue", "log.test", "log.pvalue")
+                         return(res)
+                       })
+                                                                                                                                                                                                                           
+
+res_pry <- t(as.data.frame(univ_results, check.names = FALSE)) %>% as.data.frame()
+res2_pry <- res_pry[!is.na(res_pry$log.pvalue),]
+res2_pry$log.pvalue = as.numeric(res2_pry$log.pvalue)
+res2_pry$log.p_adjust = p.adjust(res2_pry$log.pvalue, method = "BH")
+min(res2_pry$log.p_adjust)   # min = 0.007719
+
+write.xlsx(res2_pry, file = "source_data/COX_pry_int.xlsx", rowNames = T)
+
+
+
+## rlps
+names(prot_rlps_impMin) = gsub("-", "_", names(prot_rlps_impMin)) # will report errors if there is a digit after the hyphen-
+names(prot_rlps_impMin) = gsub("/", "_", names(prot_rlps_impMin))
+
+covariates <- names(prot_rlps_impMin[,1:(ncol(prot_rlps_impMin)-2)])  # protein names
+univ_formulas <- sapply(covariates, 
+                        function(x) as.formula(paste('Surv(RFS, recur)~',x)))
+univ_models <- lapply(univ_formulas, function(x){coxph(x, data = prot_rlps_impMin)})
+univ_results <- lapply(univ_models,
+                       function(x){
+                         x <- summary(x)
+                         wald.pvalue <- signif(x$wald['pvalue'], digits = 2)  %>% as.numeric()
+                         wald.test <- signif(x$wald["test"], digits = 2)
+                         log.pvalue <- signif(x$logtest['pvalue'], digits = 2) %>% as.numeric()
+                         log.test <- signif(x$logtest["test"], digits = 2)
+                         beta <- signif(x$coef[1], digits=2);
+                         HR <- signif(x$coef[2], digits=2);
+                         HR.confint.lower <- signif(x$conf.int[,"lower .95"],2)
+                         HR.confint.upper <- signif(x$conf.int[,"upper .95"],2)
+                         HR <- paste0(HR, " (", 
+                                      HR.confint.lower, "-", HR.confint.upper, ")")
+                         res<-c(beta, HR, wald.test, wald.pvalue,log.test, log.pvalue)
+                         names(res)<-c("beta", "HR (95% CI for HR)",           
+                                       "wald.test", "wald.pvalue", "log.test", "log.pvalue")
+                         return(res)
+                       })
+
+res_rlps <- t(as.data.frame(univ_results, check.names = FALSE)) %>% as.data.frame()
+res2_rlps <- res_rlps[!is.na(res_rlps$log.pvalue),]
+res2_rlps$log.pvalue = as.numeric(res2_rlps$log.pvalue)
+res2_rlps$log.p_adjust = p.adjust(res2_rlps$log.pvalue, method = "BH")
+min(res2_rlps$log.p_adjust)   # 0.9582663
+
+write.xlsx(res2_rlps, file = "source_data/COX_rlps_int.xlsx", rowNames = T)
+
+res3_rlps_0.05 <- res2_rlps[res2_rlps$log.pvalue < 0.05,]
+res3_rlps_0.01 <- res2_rlps[res2_rlps$log.pvalue < 0.01,]
+res3_rlps_0.001 <- res2_rlps[res2_rlps$log.pvalue < 0.001,]
+res3_rlps_0.005 <- res2_rlps[res2_rlps$log.pvalue < 0.005,]
+
+###neo
+
+names(prot_neo_impMin) = gsub("-", "_", names(prot_neo_impMin)) # will report errors if there is a digit after the hyphen-
+names(prot_neo_impMin) = gsub("/", "_", names(prot_neo_impMin))
+
+covariates <- names(prot_neo_impMin[,1:(ncol(prot_neo_impMin)-2)])  # protein names
+univ_formulas <- sapply(covariates, 
+                        function(x) as.formula(paste('Surv(RFS, recur)~',x)))
+univ_models <- lapply(univ_formulas, function(x){coxph(x, data = prot_neo_impMin)})
+univ_results <- lapply(univ_models,
+                       function(x){
+                         x <- summary(x)
+                         wald.pvalue <- signif(x$wald['pvalue'], digits = 2)  %>% as.numeric()
+                         wald.test <- signif(x$wald["test"], digits = 2)
+                         log.pvalue <- signif(x$logtest['pvalue'], digits = 2) %>% as.numeric()
+                         log.test <- signif(x$logtest["test"], digits = 2)
+                         beta <- signif(x$coef[1], digits=2);
+                         HR <- signif(x$coef[2], digits=2);
+                         HR.confint.lower <- signif(x$conf.int[,"lower .95"],2)
+                         HR.confint.upper <- signif(x$conf.int[,"upper .95"],2)
+                         HR <- paste0(HR, " (", 
+                                      HR.confint.lower, "-", HR.confint.upper, ")")
+                         res<-c(beta, HR, wald.test, wald.pvalue,log.test, log.pvalue)
+                         names(res)<-c("beta", "HR (95% CI for HR)",           
+                                       "wald.test", "wald.pvalue", "log.test", "log.pvalue")
+                         return(res)
+                       })
+
+
+res_neo <- t(as.data.frame(univ_results, check.names = FALSE)) %>% as.data.frame()
+res2_neo <- res_neo[!is.na(res_neo$log.pvalue),]
+res2_neo$log.pvalue = as.numeric(res2_neo$log.pvalue)
+res2_neo$log.p_adjust = p.adjust(res2_neo$log.pvalue, method = "BH")
+min(res2_neo$log.p_adjust)   ## 0.3049005
+
+write.xlsx(res2_neo, file = "source_data/COX_neo_int.xlsx", rowNames = T)
+
+
+```
+

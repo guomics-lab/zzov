@@ -1,0 +1,357 @@
+---
+title: "Fig 1 DE"
+author: "Yan Zhou"
+date: "2024-03-31"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+
+pacman::p_load(readxl, openxlsx, 
+               reshape2, magrittr, tidyverse, Hmisc,
+               ggupset,ggrepel,
+               Mfuzz, FactoMineR, factoextra,
+               ggpubr, ggsignif, ggridges,
+               RColorBrewer)
+
+aggregate_column = function(matrix = df,
+                            label = label,
+                            Fun = "mean",
+                            IsMatrixlog2 = T,
+                            IsResultLog2 = T) {
+  # matrix[matrix == "NaN" | matrix == "Filtered"] = NA
+
+  # round(digits = 4) # 为了不让as.numeric命令四舍五入 
+  matrix = round(matrix, digits = 4) # 2022.09.26增加本行，删除上行，否则报错
+  
+  df1 = apply(matrix,
+              2,
+              as.numeric) # the result of spectronaut is character
+
+  df2 = ifelse(IsMatrixlog2,
+              list(2^df1),
+              list(df1))
+  df2 = df2[[1]]
+
+  temp = aggregate(t(df2),
+                   by = list(label),
+                   FUN = Fun,
+                   na.rm = TRUE) %>% t()
+
+
+  temp1 = temp[-1,] %>%
+    matrix(ncol = ncol(temp)) %>%
+    apply(2, as.numeric)
+
+  temp2 = ifelse(IsResultLog2,
+                 list(log2(temp1)),
+                 list(temp1))[[1]]
+
+  temp3 = data.frame(temp2,
+                     row.names = row.names(matrix),
+                     stringsAsFactors = F)
+  names(temp3) = temp[1,]
+  return(temp3)
+}
+
+ge.split <- function(data,split,which=1){
+  sapply(data,function(v){strsplit(v,split)[[1]][which]})
+}
+
+```
+
+```{r import data}
+
+pinfo = read.xlsx("20210728ZZOV_patient_sample_info.xlsx", sheet = "A.patient")
+
+sinfo = read.xlsx("20210728ZZOV_patient_sample_info.xlsx", sheet = "C.923_sample")
+
+pm = read.table("20210615ZZOV_923sample_quanNor_NA=0.8min_diann_prot.txt")  # updated matrix
+
+
+```
+
+
+```{r filter patients info}
+pinfo1 = pinfo[pinfo$Bcr_patient_barcode %in% sinfo$bcr_patient_barcode,]
+
+pinfo1$Histology_Type[pinfo1$Histology8 == "NM"] = "GroupA"
+pinfo1$Histology_Type[pinfo1$Histology8 == "BN"] = "GroupB"
+pinfo1$Histology_Type[pinfo1$Histology8 == "BD"] = "GroupC"
+pinfo1$Histology_Type[pinfo1$Group == "Primary carcinoma" & pinfo1$modified_Tumor_stage %in% c(1:2)] = "GroupD"
+pinfo1$Histology_Type[pinfo1$Group == "Primary carcinoma" & pinfo1$modified_Tumor_stage %in% c(3:4)] = "GroupE"
+
+pinfo1 = pinfo1[!is.na(pinfo1$Histology_Type),]
+
+nm = str_sub(names(pm), end = -4)
+
+pm_1 = pm[,nm %in% pinfo1$Patient_ID]
+
+nm1 = str_sub(names(pm_1),end = -4)
+
+pinfo2 = pinfo1[1,]
+
+for (i in nm1){
+  pinfo2 = rbind(pinfo1[pinfo1$Patient_ID == i,],pinfo2)
+
+}
+pinfo3 = pinfo2 %>% map_df(rev)
+pinfo3 = pinfo3[-1,]
+
+identical(nm1,pinfo3$Patient_ID)
+
+# count for N for each group
+for (i in c("A","B","C","D","E")) {
+  
+  x = paste0(sum(grepl(i,pinfo1$Histology_Type)),
+         ",")
+  cat(x)
+}
+
+# count for n for each group
+for (i in c("A","B","C","D","E")) {
+  
+  x = paste0(sum(grepl(i,pinfo3$Histology_Type)),
+         ",")
+  cat(x)
+}
+
+
+
+
+```
+
+```{R anova_P}
+
+# use log2 matrix
+aov_p = apply(log2(pm_1),
+              1,
+              function(v) {
+                p = tryCatch(aov(v ~ pinfo3$Histology_Type) %>%
+                  summary() %>%
+                  .[[1]] %>%
+                  .[["Pr(>F)"]] %>%
+                  .[1] %>%
+                  round(digits = 3),
+                  error = function(x) NA)
+              })
+
+# adjust P value by Benjamini-Hochberg method
+aov_p_adjusted = p.adjust(aov_p, method = "BH")
+prot_aov0.05 = data.frame(row.names = row.names(pm_1),p_value = aov_p, aov_p_adjusted = aov_p_adjusted)
+
+prot_aov0.05 = prot_aov0.05[which(aov_p_adjusted <= 0.05),]
+
+write.xlsx(prot_aov0.05,
+           "ZZOV_aovp_less_than_0.05_protein_list_20210729_5groups.xlsx", rowNames = T)
+
+```
+
+```{r mfuzz - Fig1 D}
+pm_2 = aggregate_column(matrix = pm_1[row.names(prot_aov0.05),],
+                       label = pinfo3$Histology_Type,
+                       Fun = "mean",
+                       IsMatrixlog2 = F,
+                       IsResultLog2 = T)
+
+pm_exp <- ExpressionSet(assayData = as.matrix(pm_2))
+
+if(interactive()) {
+  temp <- filter.std(pm_exp,
+                     min.std = 0.05) # 丟掉表達值變化不大的基因
+  temp <- standardise(temp) # normalization the value in 0-1
+}
+
+#set.seed(42)
+m <- mestimate(temp)
+
+
+c_no = 20
+
+set.seed(2021)
+cl <- mfuzz(temp, 
+            c = c_no,
+            m = m)
+
+pdf("ZZOV_Mfuzz_5group_8741protein_20211124_group1_clu20.pdf", width = 10, height = 10)
+mfuzz.plot2(temp,
+            cl = cl,
+            mfrow = c(4,5),
+            min.mem = 0.4,
+            time.labels =  names(pm_2),
+            xlab = "Time",
+            centre = TRUE,
+            centre.lwd = 0.2,
+            x11 = F)
+dev.off()
+# output the protein in all of cluster
+
+for(n in 1:c_no) {
+  prot_cluster = names(cl$cluster[unname(cl$cluster) == n])
+  pm_2$cluster_No.[row.names(pm_2) %in% prot_cluster] = n
+}
+
+write.xlsx(pm_2, 
+           "source_data/fig1D_mfuzz_value.xlsx", 
+           rowNames = T)
+
+
+
+mfuzz_membership = cbind(cl[["membership"]],
+                         cl$cluster) %>% data.frame()
+
+
+colnames(mfuzz_membership)[21] = "Cluster_No."
+
+write.xlsx(mfuzz_membership,
+           "source_data/fig1D_mfuzz_membership_value.xlsx",
+           rowNames = TRUE, colNames = TRUE)
+
+ 
+```
+
+```{r t test - Fig1 E}
+## data processing
+nm = str_sub(names(pm), end = -4)
+
+pinfo1 = pinfo[pinfo$Patient_ID %in% nm, ]
+pinfo2 = pinfo1[(pinfo1$Group == "Normal" | pinfo1$Group == "Primary carcinoma"),]
+
+sinfo1 = sinfo[sinfo$bcr_patient_barcode %in% pinfo2$Bcr_patient_barcode,]
+sinfo1$Histology = pinfo2$Histology8[match(sinfo1$bcr_patient_barcode, pinfo2$Bcr_patient_barcode)]
+
+pm1 = pm[,names(pm) %in% sinfo1$Sample_name]
+sinfo2 = sinfo1[match(names(pm1), sinfo1$Sample_name),]
+
+
+A = pinfo2$Patient_ID[pinfo2$Histology8 == "NM" ]
+B = pinfo2$Patient_ID[pinfo2$Group == "Primary carcinoma" ]
+
+group_A = pm[,nm %in% A]
+group_B = pm[,nm %in% B]
+
+group_A_log2 = log2(group_A)
+group_B_log2 = log2(group_B)
+
+
+## group B HS
+P_value_B = data.frame(matrix())
+p_adjusted_B = data.frame(matrix())
+
+
+zero_range <- function(x, tol = .Machine$double.eps ^ 0.5) {
+  if (length(x) == 1) return(TRUE)
+  x <- range(x) / rowMeans(x)
+  identical(x[1], x[2])
+}
+
+
+
+for(i in 1:nrow(group_A_log2)){
+  if (sum(zero_range(group_A_log2[i,]) + zero_range(group_B_log2[i,])) > 0)
+  {P_value_B[i,1] = NA}
+  else
+  {Ttest = t.test(group_A_log2[i,], group_B_log2[i,],
+                  paired = FALSE, var.equal = FALSE)
+  P_value_B[i,1] = Ttest$p.value
+  }
+}
+
+
+p_adjusted_B = P_value_B
+p_adjusted_B[,1] = p.adjust(P_value_B[,1], method = "BH")
+
+pm_fc_A = rowMeans(group_A) 
+pm_fc_B = rowMeans(group_B)
+
+fc_B = pm_fc_B / pm_fc_A
+
+result_B = cbind(P_value_B,p_adjusted_B,fc_B) %>% as.data.frame()
+
+rownames(result_B) = rownames(pm)
+result_B$log2fc = log2(result_B$fc)
+
+names(result_B)[1:2] = c("p_value", "p_value_adjusted")
+
+result_B = result_B[!result_B$fc_B == 1, ]
+
+
+Pval_list_B_0.05 <- result_B[result_B$p_value_adjusted < 0.05 & 
+                                 (!is.na(result_B$p_value_adjusted)) &
+                                 abs(result_B$log2fc) > 1, ]
+
+### 2021.11.24 volcano plot
+Dat = result_B
+Dat$threshold = factor(ifelse(
+    Dat$p_value_adjusted < 0.05 &
+        abs(Dat$log2fc) > 1,
+    ifelse(Dat$log2fc > 1 , 'Up', 'Down'),
+    '-'
+),
+levels = c('Up', 'Down', '-'))
+Dat <- Dat[!is.na(Dat$threshold),]
+Dat$prot = row.names(Dat) %>% ge.split("_",1)
+Dat$gene = row.names(Dat) %>% ge.split("_",2)
+
+Dat1 = read.xlsx("ZZOV_aovp_less_than_0.05_protein_list_20210729_5groups.xlsx", rowNames = T)
+Dat2 = read.xlsx("20210730mFuzz_43selected_prots.xlsx")
+
+Dat$label= "-"
+
+Dat$label[Dat$threshold == "Up" & rownames(Dat) %in% row.names(Dat1)] = "Up_ANOVA"
+Dat$label[Dat$threshold == "Down" & rownames(Dat) %in% row.names(Dat1)] = "Down_ANOVA"
+Dat$label[Dat$threshold == "Up" & !rownames(Dat) %in% row.names(Dat1)] = "Up"
+Dat$label[Dat$threshold == "Down" & !rownames(Dat) %in% row.names(Dat1)] = "Down"
+
+
+Dat$secreted = "No"
+Dat$secreted[Dat$prot %in% Dat2$uniprotID] = "Yes"
+
+Dat$label[Dat$label == "Up_ANOVA" & Dat$secreted == "Yes" ] = "Up_secreted"
+Dat$label[Dat$label == "Down_ANOVA" & Dat$secreted == "Yes" ] = "Down_secreted"
+
+Dat$label = Dat$label %>% factor(levels = c("Up","Up_ANOVA", "Up_secreted","Down", "Down_ANOVA", "-"))
+
+write.xlsx(Dat,"source_data/fig1E.xlsx",rowNames = T)
+
+ggplot(Dat, aes(
+    x = log2fc,
+    y = -log10(p_value_adjusted),
+    color = label,
+    alpha = label,
+    size = label
+)) +
+    geom_point() +
+    ylim(-1, 50) + 
+    scale_color_manual(values = c("#FF9900","#DC143C","#DC143C","#99CCFF", "#00008B", "#808080")) + 
+    scale_alpha_manual(values=c(1,0.5,1,1,0.5,1)) + #确定点的透明度
+    scale_size_manual(values=c(0.5,0.5,3,0.5,0.5,0.5)) + #确定点的大小
+    geom_text_repel(data = Dat[(Dat$label == "Up_secreted"| Dat$label == "Down_secreted"), ],
+        aes(label = gene),
+        size = 4,
+        segment.color = "black",
+        show.legend = FALSE,
+        max.overlaps = 50
+    ) + 
+    theme_bw() +
+    theme(legend.title = element_blank()
+          ) +
+          ylab('-Log10 (adjusted P value)') +
+              xlab('Log2 (FC = Group B/Group A)') + 
+              geom_vline(
+                  xintercept = c(-1, 1),
+                  lty = 3,
+                  col = "black",
+                  lwd = 0.5
+              ) + #horizontal line |FoldChange|>2
+              geom_hline(
+                  yintercept = -log10(0.05),
+                  lty = 3,
+                  col = "black",
+                  lwd = 0.5
+              )#vertical line P.Value<0.05
+ggsave("NM_vs_pri_adj.P.Val0.05_20211124.pdf", width = 10, height = 8)
+
+```
+

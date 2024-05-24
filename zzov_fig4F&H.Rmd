@@ -1,0 +1,101 @@
+---
+title: "Untitled"
+author: "yuyi"
+date: "2022/2/11"
+output: html_document
+---
+
+```{r }
+```
+
+
+
+```{r }
+rm(list = ls())
+# source("D:/library_yu.R")
+library(openxlsx)
+df <- read.xlsx("20220211ZZOV_univariateCox_plasma_tissue.xlsx")
+df1 <- read.xlsx("data.xlsx")
+# library(readxl)
+library(tidyverse)
+library(ggplot2)
+library(ggrepel)
+-log2(df$plasmalikelihood.pvalue)
+pdf(file='sand2.pdf',height =  4,width = 8)
+ggplot()+
+  layer(data=df,mapping = aes(x=label1_x,y=label1_y,colour=pathway,size=-log2(plasmalikelihood.pvalue)),geom="point",stat = "identity",position = "identity",params=list(alpha=.6,size=-log2(df$plasmalikelihood.pvalue)))+
+  geom_text_repel(data=df,mapping = aes(x=label1_x,y=label1_y,label = df$gene_name),size=3)+
+  layer(data=df1,mapping = aes(x=label2_x1,y=label2_y1),geom="point",params=list(color="blue",alpha=.3,shape=3),stat="identity", position = "identity")+
+  geom_hline(aes(yintercept=1),linetype=5,col="grey")+
+  geom_vline(aes(xintercept = 1),linetype=5,col="grey")+
+  scale_y_continuous()+
+  scale_x_continuous()+
+  coord_cartesian()+
+  theme_classic()
+ dev.off()
+ 
+ 
+ 
+```
+
+
+
+```{r }
+
+bar <- read.xlsx("./bar.xlsx")
+
+#install.packages("DescTools")
+library(DescTools)
+
+
+ head(bar)
+
+ 
+ pdf(file='bar.pdf',height =  4,width = 10)
+PlotPyramid(lx=bar[,"LogP1(-)"], 
+            rx=bar[,"LogP2(-)"],
+            ylab=bar$Description,
+            col=c("lightslategray", "orange2"),
+            border = NA, ylab.x=0,
+            xlim=c(-30,15),
+            gapwidth = NULL, 
+            cex.lab = 0.8, cex.axis=0.8, 
+            xaxt = TRUE,
+            lxlab="-LogP(UP)", 
+            rxlab="-LogP(FP)",
+            main="bar plot",
+            space=0.5, args.grid=list(lty=1))
+
+ dev.off()
+
+
+#  library(scales)
+show_col(hue_pal()(6))
+#  
+hue_pal()(5)
+ 
+ 
+ library(plotrix)
+ 
+ UP<-bar$`LogP1(-)`
+ FP<-bar$`LogP2(-)`
+ 
+ UCOL<-c("#A3A500" ,"lightslategray","#00B0F6","#00BF7D","lightslategray")
+ FCOL<-c("orange2","orange2","orange2","#F8766D" ,"#E76BF3")
+ 
+ labels<-bar$Description
+ pdf(file='bar.pdf',height =  4,width =10)
+ par(mar=pyramid.plot(UP,FP,labels = labels, main="bar plot",lxcol=UCOL,rxcol = FCOL,gap=0,show.values = T,top.labels = c("FP","Description","UP"),unit = "-LogP",laxlab=c(0,10,20,30),raxlab=c(0,5,10,15)))
+ dev.off()
+
+
+ 
+# 6 #F8766D  #B79F00 #00BA38 #00BFC4 #619CFF #F564E3
+#  library(scales)
+# show_col(hue_pal()(n))
+#  
+# 5  #F8766D
+ 
+```
+
+
