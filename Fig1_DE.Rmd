@@ -22,8 +22,8 @@ aggregate_column = function(matrix = df,
                             IsResultLog2 = T) {
   # matrix[matrix == "NaN" | matrix == "Filtered"] = NA
 
-  # round(digits = 4) # 为了不让as.numeric命令四舍五入 
-  matrix = round(matrix, digits = 4) # 2022.09.26增加本行，删除上行，否则报错
+  # round(digits = 4) #
+  matrix = round(matrix, digits = 4) # 
   
   df1 = apply(matrix,
               2,
@@ -159,7 +159,7 @@ pm_exp <- ExpressionSet(assayData = as.matrix(pm_2))
 
 if(interactive()) {
   temp <- filter.std(pm_exp,
-                     min.std = 0.05) # 丟掉表達值變化不大的基因
+                     min.std = 0.05) # 
   temp <- standardise(temp) # normalization the value in 0-1
 }
 
@@ -325,8 +325,8 @@ ggplot(Dat, aes(
     geom_point() +
     ylim(-1, 50) + 
     scale_color_manual(values = c("#FF9900","#DC143C","#DC143C","#99CCFF", "#00008B", "#808080")) + 
-    scale_alpha_manual(values=c(1,0.5,1,1,0.5,1)) + #确定点的透明度
-    scale_size_manual(values=c(0.5,0.5,3,0.5,0.5,0.5)) + #确定点的大小
+    scale_alpha_manual(values=c(1,0.5,1,1,0.5,1)) + #
+    scale_size_manual(values=c(0.5,0.5,3,0.5,0.5,0.5)) + #
     geom_text_repel(data = Dat[(Dat$label == "Up_secreted"| Dat$label == "Down_secreted"), ],
         aes(label = gene),
         size = 4,
