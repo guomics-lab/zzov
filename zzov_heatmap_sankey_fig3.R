@@ -237,7 +237,7 @@ sank_list$pathway_clus2[is.na(sank_list$pathway)]<-NA
 # sank_plot$des<-as.numeric(sank_plot$des)
 # sank_plot$des1<-as.numeric(sank_plot$des1)
 # class(sank_plot$des1)
-#桑基图
+#sanky
 library(reshape2)
 
 library(ggplot2)
