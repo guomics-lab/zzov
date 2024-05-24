@@ -26,7 +26,7 @@ for(i in 1:length(techRep)){
     matCor<-as.matrix(protmat1[indSel,1:(ncol(protmat1)-2)])
     comAll<-combn(nrow(matCor),2)
     for(j in 1:ncol(comAll)){
-      #做相关性分???
+      #corrlation
       cortechRep[m]<-cor(matCor[comAll[1,j],],matCor[comAll[2,j],], use = "na.or.complete")
       label_name<-row.names(matCor)[comAll[,j]]
       names(cortechRep)[m]<-paste0(label_name,collapse = ";")
